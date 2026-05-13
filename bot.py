@@ -21,6 +21,43 @@ CYCLE_SLEEP = int(os.getenv("CYCLE_SLEEP", "60"))        # 60 min between cycles
 DATA_FILE = Path(__file__).parent / "data.txt"       # initData per line
 TOKENS_FILE = Path(__file__).parent / "tokens.json"  # cached JWT tokens
 
+# ── Load .env ──────────────────────────────────────────────────────────────
+def _load_dotenv():
+    """Simple .env loader (no python-dotenv dependency needed)."""
+    env_file = Path(__file__).parent / ".env"
+    if not env_file.exists():
+        return
+    for line in env_file.read_text().strip().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key, val = key.strip(), val.strip()
+        if key not in os.environ:
+            os.environ[key] = val
+
+_load_dotenv()
+
+# ── Telegram Notification ──────────────────────────────────────────────────
+TG_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TG_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")
+TG_ENABLED   = bool(TG_BOT_TOKEN and TG_CHAT_ID)
+
+def send_telegram(msg: str):
+    """Send a message via Telegram bot. Non-blocking, silent on error."""
+    if not TG_ENABLED:
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
+        requests.post(url, json={
+            "chat_id": TG_CHAT_ID,
+            "text": msg,
+            "parse_mode": "Markdown",
+            "disable_notification": False,
+        }, timeout=10)
+    except Exception:
+        pass  # never crash on notification failure
+
 # Version hash from /public/data/config — updated at startup
 VERSION_HASH = "2037265378"
 
@@ -168,6 +205,11 @@ class BoinkersAPI:
             "isUpgradeCurrentBoinkerToMax": True,
         })
 
+    # ── raffle ───────────────────────────────────────────────────────────
+    def claim_raffle(self) -> dict:
+        """Claim daily raffle ticket."""
+        return self._post("/api/raffle/claimTicketForUser")
+
     # ── tasks ────────────────────────────────────────────────────────────
     def get_tasks(self) -> dict:
         return self._get("/api/rewardedActions/mine")
@@ -261,6 +303,12 @@ def run_account(api: BoinkersAPI) -> bool:
     # ── Tasks ───────────────────────────────────────────────────────────
     _do_tasks(api, user)
 
+    # ── Sticker surprises ──────────────────────────────────────────────
+    _do_sticker_surprises(api)
+
+    # ── Raffle ticket ─────────────────────────────────────────────────
+    _do_raffle(api)
+
     # ── Upgrade boinker ────────────────────────────────────────────────
     up_resp = api.upgrade_boinker()
     if up_resp["ok"]:
@@ -280,8 +328,64 @@ def run_account(api: BoinkersAPI) -> bool:
     return True
 
 
+def _do_raffle(api: BoinkersAPI):
+    """Claim daily raffle ticket."""
+    resp = api.claim_raffle()
+    if resp["ok"]:
+        log.info(f"[{api.name}] 🎟️ Raffle ticket claimed!")
+    else:
+        err = resp.get("error", "")
+        if "already" in str(err).lower() or "claimed" in str(err).lower() or "177869" in str(err):
+            log.info(f"[{api.name}] 🎟️ Raffle already claimed today")
+        else:
+            log.warning(f"[{api.name}] Raffle claim failed: {err}")
+
+
+def _do_sticker_surprises(api: BoinkersAPI):
+    """Claim sticker album surprise rewards."""
+    tasks_resp = api.get_tasks()
+    if not tasks_resp["ok"]:
+        return
+
+    # Find sticker surprise tasks
+    tasks = tasks_resp.get("data", {})
+    if isinstance(tasks, list):
+        tasks = {t["nameId"]: t for t in tasks}
+
+    sticker_tasks = {k: v for k, v in tasks.items() if k.startswith("Stiker_Surprize_")}
+    if not sticker_tasks:
+        return
+
+    log.info(f"[{api.name}] 🎴 {len(sticker_tasks)} sticker surprise(s) available")
+
+    for name_id, task in sticker_tasks.items():
+        secs = task.get("secondsToAllowClaim", 10)
+
+        # Click
+        click_resp = api.click_task(name_id)
+        if not click_resp["ok"]:
+            log.warning(f"[{api.name}]   ✗ {name_id}: click failed")
+            continue
+
+        time.sleep(min(secs + 2, 15))
+
+        # Claim
+        claim_resp = api.claim_task(name_id)
+        if claim_resp["ok"]:
+            prize = claim_resp["data"].get("prizeGotten", "claimed")
+            log.info(f"[{api.name}]   ✓ {name_id}: {prize}")
+        else:
+            err = claim_resp.get("error", "")
+            if "already" in str(err).lower() or "claimed" in str(err).lower():
+                log.info(f"[{api.name}]   ✓ {name_id}: already claimed")
+            else:
+                log.warning(f"[{api.name}]   ✗ {name_id}: claim failed — {err}")
+
+        time.sleep(1)
+
+
 def _do_tasks(api: BoinkersAPI, user: dict):
-    """Process available tasks."""
+    """Process available rewarded tasks."""
     tasks_resp = api.get_tasks()
     completed_resp = api.get_tasks_completed()
 
@@ -297,8 +401,16 @@ def _do_tasks(api: BoinkersAPI, user: dict):
         if name_id in completed and not task.get("claimDateTime"):
             todo.append({**completed[name_id], **task})
 
-    # Filter out ad tasks & already done
-    pending = [t for t in todo if not t.get("verification") and not t.get("claimDateTime")]
+    # Filter: no ads, no verification, no stickers (handled separately)
+    SKIP = {"sticker", "shareStory", "link", "watch-ad", "vip", "friends"}
+    pending = [
+        t for t in todo
+        if not t.get("verification")
+        and not t.get("claimDateTime")
+        and t.get("type") not in SKIP
+        and not t["nameId"].startswith("Stiker_Surprize_")
+        and not t["nameId"].startswith("dailyVIP")
+    ]
 
     if not pending:
         log.info(f"[{api.name}] ✅ No tasks to do")
@@ -343,28 +455,55 @@ def run_queue(once=False):
         log.error("No accounts in data.txt")
         return
 
-    log.info(f"🚀 Starting Boinkers bot — {len(accounts)} account(s)")
+    n_accounts = len(accounts)
+    log.info(f"🚀 Starting Boinkers bot — {n_accounts} account(s)")
     log.info(f"   Account delay: {ACCOUNT_DELAY}s | Cycle sleep: {CYCLE_SLEEP}m")
+    if TG_ENABLED:
+        log.info(f"   📱 Telegram notifications: ENABLED")
 
+    cycle = 0
     while True:
+        cycle += 1
+        cycle_start = time.time()
+        results = []
+
         for i, init_data in enumerate(accounts):
             name = f"akun{i+1}"
             api = BoinkersAPI(init_data, name)
 
             success = run_account(api)
             status = "✅" if success else "❌"
+            results.append((name, success))
             log.info(f"[{name}] {status} Done")
 
             # Delay between accounts (except last)
-            if i < len(accounts) - 1:
+            if i < n_accounts - 1:
                 log.info(f"⏳ Waiting {ACCOUNT_DELAY}s before next account...")
                 time.sleep(ACCOUNT_DELAY)
+
+        elapsed = time.time() - cycle_start
+        ok = sum(1 for _, s in results if s)
+        fail = n_accounts - ok
+
+        # ── Send Telegram notification ──────────────────────────────────
+        if TG_ENABLED:
+            now_str = datetime.now(timezone.utc).strftime("%H:%M UTC")
+            lines = [
+                f"🎰 *Boinkers Bot — Cycle {cycle}*",
+                f"",
+                f"⏱ Selesai dalam `{elapsed:.0f}s` | {now_str}",
+                f"📊 *{ok}/{n_accounts}* akun berhasil",
+            ]
+            if fail > 0:
+                lines.append(f"⚠️ {fail} akun gagal")
+            send_telegram("\n".join(lines))
 
         if once:
             log.info("✅ Single run complete (--once mode)")
             break
 
-        log.info(f"💤 Cycle complete — sleeping {CYCLE_SLEEP}m...")
+        next_run = datetime.now(timezone.utc) + timedelta(minutes=CYCLE_SLEEP)
+        log.info(f"💤 Cycle complete — sleeping {CYCLE_SLEEP}m (next: {next_run.strftime('%H:%M UTC')})")
         time.sleep(CYCLE_SLEEP * 60)
 
 
