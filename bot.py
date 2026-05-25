@@ -15,7 +15,7 @@ log.handlers = [h]
 
 # ── Config ─────────────────────────────────────────────────────────────────
 BASE_URL = "https://boink.boinkers.co"
-ACCOUNT_DELAY = int(os.getenv("ACCOUNT_DELAY", "10"))  # 10 sec between accounts (testing)
+ACCOUNT_DELAY = int(os.getenv("ACCOUNT_DELAY", "15"))  # 15 sec between accounts
 CYCLE_SLEEP = int(os.getenv("CYCLE_SLEEP", "60"))        # 60 min between cycles
 
 DATA_FILE = Path(__file__).parent / "data.txt"       # initData per line
