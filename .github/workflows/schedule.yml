@@ -13,15 +13,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.12'
-      
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python3 -m pip install --upgrade pip
+          pip3 install -r requirements.txt
       
       - name: Run Boinkers Bot
         env:
@@ -30,7 +25,7 @@ jobs:
           ACCOUNT_DELAY: ${{ secrets.ACCOUNT_DELAY || '300' }}
           CYCLE_SLEEP: ${{ secrets.CYCLE_SLEEP || '60' }}
         run: |
-          python bot.py --once
+          python3 bot.py --once
       
       - name: Upload logs
         if: always()
