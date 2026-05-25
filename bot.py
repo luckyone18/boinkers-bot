@@ -566,10 +566,10 @@ def run_queue(once=False):
         if TG_ENABLED:
             now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
             lines = [
-                f"🤖 *Boinkers Bot Report*",
-                f"",
+                "🤖 *Boinkers Bot Report*",
+                "",
                 f"📊 *Cycle:* {now_str}",
-                f"",
+                "",
             ]
             
             for report in account_reports:
@@ -580,7 +580,7 @@ def run_queue(once=False):
                 lines.append(f"├─ 🎰 Spins: {report['spins']}")
                 lines.append(f"├─ ⬆️ Status: {'✅ Success' if report['success'] else '❌ Failed'}")
                 lines.append(f"└─ ⏱ Elapsed: {elapsed:.0f}s")
-                lines.append(f"")
+                lines.append("")
             
             lines.append(f"📈 *Summary:* {ok}/{n_accounts} akun berhasil")
             if fail > 0:
@@ -589,7 +589,7 @@ def run_queue(once=False):
             next_run = datetime.now(timezone.utc) + timedelta(minutes=CYCLE_SLEEP)
             lines.append(f"⏰ *Next cycle:* {next_run.strftime('%H:%M UTC')}")
             
-            send_telegram("\\n".join(lines))
+            send_telegram("\n".join(lines))
 
         if once:
             log.info("✅ Single run complete (--once mode)")
