@@ -533,6 +533,12 @@ def run_queue(once=False):
 
             # Capture user data for report
             user_resp = api.get_user()
+            username = "?"
+            rank = 0
+            soft_currency = 0
+            shit = 0
+            spins = 0
+            
             if user_resp.get("ok"):
                 user_data = user_resp.get("data", {})
                 username = user_data.get("userName", "?")
@@ -542,16 +548,16 @@ def run_queue(once=False):
                 dynamic_currencies = user_data.get("dynamicCurrencies", {})
                 shit = dynamic_currencies.get("dc11", {}).get("balance", 0)
                 spins = dynamic_currencies.get("dc1", {}).get("balance", 0)
-                
-                account_reports.append({
-                    "name": name,
-                    "username": username,
-                    "level": rank,
-                    "coins": soft_currency,
-                    "shit": shit,
-                    "spins": spins,
-                    "success": success,
-                })
+            
+            account_reports.append({
+                "name": name,
+                "username": username,
+                "level": rank,
+                "coins": soft_currency,
+                "shit": shit,
+                "spins": spins,
+                "success": success,
+            })
 
             # Delay between accounts (except last)
             if i < n_accounts - 1:
