@@ -15,7 +15,7 @@ jobs:
       
       - name: Install dependencies
         run: |
-          pip3 install --upgrade pip
+          apt-get update && apt-get install -y python3-pip
           pip3 install -r requirements.txt
       
       - name: Run Boinkers Bot
