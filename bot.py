@@ -15,7 +15,7 @@ log.handlers = [h]
 
 # ── Config ─────────────────────────────────────────────────────────────────
 BASE_URL = "https://boink.boinkers.co"
-ACCOUNT_DELAY = int(os.getenv("ACCOUNT_DELAY", "300"))  # 5 min between accounts
+ACCOUNT_DELAY = int(os.getenv("ACCOUNT_DELAY", "10"))  # 10 sec between accounts (testing)
 CYCLE_SLEEP = int(os.getenv("CYCLE_SLEEP", "60"))        # 60 min between cycles
 
 DATA_FILE = Path(__file__).parent / "data.txt"       # initData per line
@@ -204,6 +204,12 @@ class BoinkersAPI:
         return self._post("/api/boinkers/upgradeBoinker/jetpack", {
             "isUpgradeCurrentBoinkerToMax": True,
         })
+    
+    def upgrade_equipment(self, equipment_type: str) -> dict:
+        """Upgrade equipment: helmet, body, or jetpack"""
+        return self._post(f"/api/boinkers/upgradeBoinker/{equipment_type}", {
+            "isUpgradeCurrentBoinkerToMax": True,
+        })
 
     # ── raffle ───────────────────────────────────────────────────────────
     def claim_raffle(self) -> dict:
@@ -309,24 +315,69 @@ def run_account(api: BoinkersAPI) -> bool:
     # ── Raffle ticket ─────────────────────────────────────────────────
     _do_raffle(api)
 
-    # ── Upgrade boinker ────────────────────────────────────────────────
-    log.info(f"[{api.name}] 🔧 Attempting upgrade...")
-    up_resp = api.upgrade_boinker()
-    log.info(f"[{api.name}] Upgrade response: {up_resp}")
-    if up_resp["ok"]:
-        d = up_resp["data"]
-        log.info(
-            f"[{api.name}] ⬆️ Upgraded → Lv{d.get('rank', '?')} | "
-            f"💰 {d.get('newSoftCurrencyAmount', 0):,} | "
-            f"🎰 {d.get('newSlotMachineEnergy', 0)} spins"
-        )
-    else:
-        err = up_resp.get("error", "")
-        status = up_resp.get("status", "")
-        if "not enough" in str(err).lower() or "insufficient" in str(err).lower():
-            log.info(f"[{api.name}] 💤 Not enough coins to upgrade")
-        else:
-            log.warning(f"[{api.name}] Upgrade failed: {err} (status: {status})")
+    # ── Upgrade equipment & boinker ────────────────────────────────────
+    max_attempts = 10
+    attempt = 0
+    while attempt < max_attempts:
+        attempt += 1
+        
+        # Check current levels
+        user_resp = api.get_user()
+        if not user_resp["ok"]:
+            log.warning(f"[{api.name}] Cannot refresh user info")
+            break
+        
+        boinkers = user_resp.get("data", {}).get("boinkers", {})
+        progression = boinkers.get("currentBoinkerProgression", {})
+        part_levels = progression.get("partLevels", {})
+        
+        # Equipment yang belum Lv3
+        equipment_to_upgrade = []
+        for equipment in ["helmet", "body", "jetpack"]:
+            level = part_levels.get(equipment, 0)
+            if level < 3:
+                equipment_to_upgrade.append((equipment, level))
+        
+        if not equipment_to_upgrade:
+            # Semua equipment Lv3, upgrade Boinker
+            log.info(f"[{api.name}] ⬆️ All equipment Lv3, upgrading Boinker...")
+            up_resp = api.upgrade_boinker()
+            if up_resp["ok"]:
+                d = up_resp["data"]
+                log.info(
+                    f"[{api.name}] ⬆️ Boinker upgraded → Lv{d.get('rank', '?')} | "
+                    f"💰 {d.get('newSoftCurrencyAmount', 0):,} | "
+                    f"🎰 {d.get('newSlotMachineEnergy', 0)} spins"
+                )
+            else:
+                err = up_resp.get("error", "")
+                if "402" in str(err):
+                    log.info(f"[{api.name}] 💤 Not enough resources to upgrade Boinker")
+                else:
+                    log.warning(f"[{api.name}] Boinker upgrade failed: {err}")
+            break
+        
+        # Upgrade equipment yang belum Lv3
+        log.info(f"[{api.name}] 🔧 Upgrade attempt {attempt}: {equipment_to_upgrade}")
+        all_success = True
+        for equipment, current_level in equipment_to_upgrade:
+            up_resp = api.upgrade_equipment(equipment)
+            if up_resp["ok"]:
+                log.info(f"[{api.name}]   ✓ {equipment}: Lv{current_level} → Lv{current_level + 1}")
+            else:
+                err = up_resp.get("error", "")
+                if "402" in str(err):
+                    log.info(f"[{api.name}]   💤 {equipment}: Not enough resources")
+                    all_success = False
+                else:
+                    log.warning(f"[{api.name}]   ✗ {equipment}: {err}")
+                    all_success = False
+            time.sleep(1)
+        
+        # Kalau ada yang gagal (resource habis), stop loop
+        if not all_success:
+            log.info(f"[{api.name}] ⏸️ Upgrade stopped: insufficient resources")
+            break
 
     return True
 
@@ -469,6 +520,7 @@ def run_queue(once=False):
         cycle += 1
         cycle_start = time.time()
         results = []
+        account_reports = []
 
         for i, init_data in enumerate(accounts):
             name = f"akun{i+1}"
@@ -479,6 +531,28 @@ def run_queue(once=False):
             results.append((name, success))
             log.info(f"[{name}] {status} Done")
 
+            # Capture user data for report
+            user_resp = api.get_user()
+            if user_resp.get("ok"):
+                user_data = user_resp.get("data", {})
+                username = user_data.get("userName", "?")
+                boinkers = user_data.get("boinkers", {})
+                rank = boinkers.get("currentBoinkerProgression", {}).get("rank", 0)
+                soft_currency = user_data.get("softCurrencyAmount", 0)
+                dynamic_currencies = user_data.get("dynamicCurrencies", {})
+                shit = dynamic_currencies.get("dc11", {}).get("balance", 0)
+                spins = dynamic_currencies.get("dc1", {}).get("balance", 0)
+                
+                account_reports.append({
+                    "name": name,
+                    "username": username,
+                    "level": rank,
+                    "coins": soft_currency,
+                    "shit": shit,
+                    "spins": spins,
+                    "success": success,
+                })
+
             # Delay between accounts (except last)
             if i < n_accounts - 1:
                 log.info(f"⏳ Waiting {ACCOUNT_DELAY}s before next account...")
@@ -488,18 +562,34 @@ def run_queue(once=False):
         ok = sum(1 for _, s in results if s)
         fail = n_accounts - ok
 
-        # ── Send Telegram notification ──────────────────────────────────
+        # ── Send Telegram notification with detailed report ──────────────────────────────────
         if TG_ENABLED:
-            now_str = datetime.now(timezone.utc).strftime("%H:%M UTC")
+            now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
             lines = [
-                f"🎰 *Boinkers Bot — Cycle {cycle}*",
+                f"🤖 *Boinkers Bot Report*",
                 f"",
-                f"⏱ Selesai dalam `{elapsed:.0f}s` | {now_str}",
-                f"📊 *{ok}/{n_accounts}* akun berhasil",
+                f"📊 *Cycle:* {now_str}",
+                f"",
             ]
+            
+            for report in account_reports:
+                lines.append(f"👤 *Account {report['name']}: {report['username']}*")
+                lines.append(f"├─ 💰 Level: {report['level']}")
+                lines.append(f"├─ 💵 Coins: {report['coins']:,}")
+                lines.append(f"├─ 💩 Shit: {report['shit']:,.0f}")
+                lines.append(f"├─ 🎰 Spins: {report['spins']}")
+                lines.append(f"├─ ⬆️ Status: {'✅ Success' if report['success'] else '❌ Failed'}")
+                lines.append(f"└─ ⏱ Elapsed: {elapsed:.0f}s")
+                lines.append(f"")
+            
+            lines.append(f"📈 *Summary:* {ok}/{n_accounts} akun berhasil")
             if fail > 0:
                 lines.append(f"⚠️ {fail} akun gagal")
-            send_telegram("\n".join(lines))
+            
+            next_run = datetime.now(timezone.utc) + timedelta(minutes=CYCLE_SLEEP)
+            lines.append(f"⏰ *Next cycle:* {next_run.strftime('%H:%M UTC')}")
+            
+            send_telegram("\\n".join(lines))
 
         if once:
             log.info("✅ Single run complete (--once mode)")
