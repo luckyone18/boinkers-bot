@@ -21,8 +21,8 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          ACCOUNT_DELAY: ${{ secrets.ACCOUNT_DELAY || '300' }}
-          CYCLE_SLEEP: ${{ secrets.CYCLE_SLEEP || '60' }}
+          ACCOUNT_DELAY: 15
+          CYCLE_SLEEP: 60
         run: |
           python3 bot.py --once
       
