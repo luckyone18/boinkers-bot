@@ -201,7 +201,7 @@ class BoinkersAPI:
 
     # ── upgrade ──────────────────────────────────────────────────────────
     def upgrade_boinker(self) -> dict:
-        return self._post("/api/boinkers/upgradeBoinker", {
+        return self._post("/api/boinkers/upgradeBoinker/jetpack", {
             "isUpgradeCurrentBoinkerToMax": True,
         })
 
@@ -310,7 +310,9 @@ def run_account(api: BoinkersAPI) -> bool:
     _do_raffle(api)
 
     # ── Upgrade boinker ────────────────────────────────────────────────
+    log.info(f"[{api.name}] 🔧 Attempting upgrade...")
     up_resp = api.upgrade_boinker()
+    log.info(f"[{api.name}] Upgrade response: {up_resp}")
     if up_resp["ok"]:
         d = up_resp["data"]
         log.info(
@@ -320,10 +322,11 @@ def run_account(api: BoinkersAPI) -> bool:
         )
     else:
         err = up_resp.get("error", "")
+        status = up_resp.get("status", "")
         if "not enough" in str(err).lower() or "insufficient" in str(err).lower():
             log.info(f"[{api.name}] 💤 Not enough coins to upgrade")
         else:
-            log.info(f"[{api.name}] Upgrade: {err}")
+            log.warning(f"[{api.name}] Upgrade failed: {err} (status: {status})")
 
     return True
 
