@@ -7,15 +7,21 @@ on:
 
 jobs:
   run-bot:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       
+      - name: Download tokens cache
+        uses: actions/download-artifact@v4
+        with:
+          name: bot-tokens
+          path: .
+        continue-on-error: true
+      
       - name: Install dependencies
-        run: |
-          python3 -c "import requests; print('requests available')" || pip install requests
+        run: python3 -c "import requests; print('requests available')" || pip install requests
       
       - name: Run Boinkers Bot
         env:
@@ -23,15 +29,21 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           ACCOUNT_DELAY: 15
           CYCLE_SLEEP: 60
-        run: |
-          python3 bot.py --once
+        run: python3 bot.py --once
+      
+      - name: Upload tokens cache
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bot-tokens
+          path: tokens.json
+          retention-days: 30
+          overwrite: true
       
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: bot-logs
-          path: |
-            *.log
-            tokens.json
+          path: "*.log"
           retention-days: 7
